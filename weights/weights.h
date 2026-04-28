@@ -2,7 +2,7 @@
 
 #include <ap_fixed.h>
 
-using fixed = ap_fixed<40,24>;
+using fixed = ap_fixed<42,24>;
 
 extern const fixed tensor_fc_out_0_weight[4][256];
 extern const fixed tensor_fc_out_0_bias[4];
