@@ -1,41 +1,171 @@
-#include <hls_stream.h>
-#include <hls_math.h>
-#include "ap_fixed.h"
+// =============================================================================
+// tb_calibration.cpp
+// HLS Testbench — reads calibration.txt and drives the DUT with pf_points
+// and pf_features.
+//
+// Data layout in calibration.txt (per sample):
+//   SAMPLE <i>
+//   PF_POINTS     3 lines × 35 float32 values  -> pf_points[i][ch][particle]
+//   PF_FEATURES   4 lines × 35 float32 values  -> pf_features[i][ch][particle]
+//   PF_MASK       1 line  × 35 float32 values  -> pf_mask[i][0][particle]
+//
+// Dimensions mirror the original .npz arrays:
+//   pf_points   (500, 3, 35)   -- user requested view as (500,1,3,35)
+//   pf_features (500, 4, 35)   -- user requested view as (500,1,4,35)
+//   pf_mask     (500, 1, 35)
+// =============================================================================
+
 #include <iostream>
-#include <cstdio>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <cstdlib>
+#include <cmath>
+#include <ap_fixed.h>
 
-using fixed_24_8 = ap_fixed<40, 24>;
+// ---- adjust these to match your actual HLS top-level header ----------------
+void entry(const ap_fixed<18,5> tensor_pf_points[1][3][35], const ap_fixed<18,5> tensor_pf_features[1][4][35], const ap_fixed<17,4> tensor_pf_mask[1][1][35], ap_fixed<17,4> tensor_MSE[1][4]);
 
-static const fixed_24_8 pf_features[1][4][35] = {
-        { { 0.990051329, 0.116285786, -0.82897222, 0.475233674, -0.317566574, 0.627738178, -0.34249571f, 0.64986825f, 1.20003581f, -0.0749201402f, 1.4139694f, 1.12903619f, -0.44460687f, 0.825744092f, 0.734277725f, -0.351708472f, 2.29652429f, -1.41684151f, -0.728327692f, 0.2975806f, -0.531641543f, 1.13629794f, -0.520554245f, 0.806858361f, -0.364513665f, 0.110974826f, -1.42019272f, 1.04154575f, 0.707608819f, 0.413224161f, -0.364818573f, -0.783674896f, 0.881738782f, -0.40635547f, 1.02856433f },
-        { 1.59279573f, -0.948007524f, -1.99379158f, -0.606586039f, 0.728202105f, -0.864570618f, 0.0924702734f, -0.66174829f, 0.579146922f, -1.36771333f, -0.538090527f, -0.217786342f, 2.01435161f, 1.11954904f, -0.654457629f, -2.52363276f, 0.579368234f, 0.952682674f, -0.107297793f, 0.731179893f, 0.435100108f, -0.572784126f, 0.854434907f, -0.863627911f, -0.652653337f, -0.570139468f, 3.25033498f, -0.942676425f, 0.397830814f, -0.645995557f, 0.2542063f, -0.813870311f, 0.640412569f, -0.239550307f, -0.897997141f },
-        { -1.92723238f, -0.169868991f, 0.281329781f, -0.399076313f, -0.06620121f, -0.941667557f, 1.9666419f, 1.15926993f, 1.13924336f, 1.00592089f, -0.0354616642f, 0.293384403f, 0.28035146f, 0.295160025f, -0.755036473f, 0.836926162f, -1.54876041f, 0.745584607f, 2.77874994f, -0.0338591263f, -0.695742309f, 1.63775802f, 0.998901904f, -0.123735785f, 0.0247397199f, -1.70868766f, -0.621363759f, 1.78537965f, -0.659307599f, -1.12197566f, -0.480213165f, 0.860549986f, 0.2769126f, -0.869945824f, -1.08978748f },
-        { -0.287290603f, -0.168723539f, -0.157327428f, 1.679021f, -0.0710274056f, -0.922182679f, 0.0327801816f, -0.980029821f, 0.547849059f, 1.06150389f, 0.102911331f, -0.552823007f, -0.925533116f, -0.256968379f, 0.282375336f, 1.62217033f, 0.610868752f, 0.345668107f, 0.958693266f, 0.642277539f, 1.60358942f, 1.47718692f, 0.292197973f, 1.76739931f, 1.03778493f, 0.266162395f, 0.129415229f, -0.922617018f, -0.263068259f, -1.31328225f, -0.208560571f, 0.328047723f, 0.862524211f, 0.357738107f, 0.773595273f } }
-    };
+// ----------------------------------------------------------------------------
 
-static const fixed_24_8 pf_points[1][3][35] = {
-        { { 0.104783565f, -0.351191968f, -0.952690721f, 0.885741115f, -1.00882316f, -0.74296236f, -0.937611461f, 0.809581459f, -0.189586148f, 2.64978337f, -0.342560291f, -0.00571522256f, -0.859745145f, -0.742515683f, 1.71868467f, 1.05593693f, -0.637907684f, 1.2965045f, 1.96884274f, -0.69603616f, -3.05389118f, 0.971722066f, 0.0643985197f, -0.990370631f, 0.735655904f, -1.05856085f, 0.690722346f, 0.0498216897f, -0.519562185f, 1.80221665f, 0.943456113f, -1.51428843f, -0.157406747f, -0.75259763f, 0.895713568f },
-        { 0.454307079f, 1.22613406f, -0.808959603f, 0.479441941f, 1.05566347f, -0.788158417f, -0.604756713f, 0.782721639f, 0.0682571456f, 0.133021951f, 1.6082741f, 0.799459994f, 0.830792367f, -0.95917511f, -0.284224302f, -0.361517429f, 0.0636627972f, 0.0497482382f, 0.520945251f, -0.0738805756f, -0.533390582f, -0.999571681f, 1.46352398f, -1.09106874f, 1.96835375f, -0.847822547f, 1.21435285f, 1.66409039f, -0.548359215f, 0.484857261f, -0.946615875f, -1.5285244f, -0.0992193222f, -1.95013893f, -0.727955282f },
-        { 0.73614496f, 0.93692857f, 0.166162238f, 2.19617105f, 2.3367939f, 0.176844835f, -0.401869476f, 0.132300898f, 0.381192267f, 0.19069013f, -0.622391939f, 0.107626885f, -0.491873324f, 0.514343977f, 0.880342662f, 1.35383451f, -0.769401789f, 0.157442763f, 0.129144058f, -0.581071198f, 0.375691593f, 1.18374741f, 0.0256011467f, -1.03090203f, 1.79071164f, -0.129050091f, -0.174096033f, 1.268543f, 1.07610154f, -1.17266095f, -1.0997926f, -0.755546749f, 0.498223305f, 0.513265014f, 0.638597071f } }
-    };
+// Dimensions
+static const int N_SAMPLES    = 2000;
+static const int N_PT_CH      = 3;   // pf_points channels
+static const int N_FEAT_CH    = 4;   // pf_features channels
+static const int N_PARTICLES  = 35;
 
-static const fixed_24_8 pf_mask[1][1][35] = {
-        { { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f } }
-    };
 
-void entry(const fixed_24_8 tensor_pf_points[1][3][35], const fixed_24_8 tensor_pf_features[1][4][35], const fixed_24_8 tensor_pf_mask[1][1][35], fixed_24_8 tensor_MSE[1][4]);
+// Storage for one sample
+struct Sample {
+    ap_fixed<18,5> pf_points  [1][N_PT_CH  ][N_PARTICLES];
+    ap_fixed<18,5> pf_features[1][N_FEAT_CH][N_PARTICLES];
+    ap_fixed<17,4> pf_mask    [1][1        ][N_PARTICLES];
+};
 
-int main() {
-
-	std::cout << "csim starts." << std::endl;
-
-    fixed_24_8 tensor_MSE[1][4];
-
-    entry(pf_points, pf_features, pf_mask, tensor_MSE);
-
-    for (int i = 0; i < 4; i++) {
-        std::cout << tensor_MSE[0][i] << std::endl;
+// ---------------------------------------------------------------------------
+// Parse the text file produced by calibration.npz → calibration.txt
+// Returns number of samples actually read.
+// ---------------------------------------------------------------------------
+static int load_calibration(const char* path, Sample samples[N_SAMPLES])
+{
+    std::ifstream fin(path);
+    if (!fin.is_open()) {
+        std::cerr << "[TB] ERROR: cannot open " << path << "\n";
+        return -1;
     }
-   
+
+    int n_read = 0;
+    std::string line;
+
+    while (std::getline(fin, line)) {
+        // Skip comments and blank lines
+        if (line.empty() || line[0] == '#') continue;
+
+        if (line.rfind("SAMPLE ", 0) == 0) {
+            int idx = std::atoi(line.c_str() + 7);
+            if (idx < 0 || idx >= N_SAMPLES) {
+                std::cerr << "[TB] WARNING: sample index " << idx
+                          << " out of range, skipping.\n";
+                continue;
+            }
+            Sample& s = samples[idx];
+
+            // --- PF_POINTS ---
+            std::getline(fin, line); // "PF_POINTS"
+            for (int c = 0; c < N_PT_CH; ++c) {
+                std::getline(fin, line);
+                std::istringstream ss(line);
+                for (int p = 0; p < N_PARTICLES; ++p)
+                    ss >> s.pf_points[0][c][p];
+            }
+
+            // --- PF_FEATURES ---
+            std::getline(fin, line); // "PF_FEATURES"
+            for (int c = 0; c < N_FEAT_CH; ++c) {
+                std::getline(fin, line);
+                std::istringstream ss(line);
+                for (int p = 0; p < N_PARTICLES; ++p)
+                    ss >> s.pf_features[0][c][p];
+            }
+
+            // --- PF_MASK ---
+            std::getline(fin, line); // "PF_MASK"
+            std::getline(fin, line);
+            {
+                std::istringstream ss(line);
+                for (int p = 0; p < N_PARTICLES; ++p)
+                    ss >> s.pf_mask[0][0][p];
+            }
+
+            ++n_read;
+        }
+    }
+
+    fin.close();
+    std::cout << "[TB] Loaded " << n_read << " samples from " << path << "\n";
+    return n_read;
+}
+
+
+// ---------------------------------------------------------------------------
+// Main testbench
+// ---------------------------------------------------------------------------
+int main(int argc, char* argv[])
+{
+    const char* data_file = (argc > 1) ? argv[1] : "C:/Users/dewei/Documents/B-reco-vitis-hls-smaller-model/network_inference/calibration.txt";
+
+    // Allocate sample storage (stack is fine for 500 samples at this size)
+    static Sample samples[N_SAMPLES];
+
+    int n = load_calibration(data_file, samples);
+    if (n <= 0) return 1;
+
+
+    std::ofstream outputFile("C:/Users/dewei/Documents/B-reco-vitis-hls-smaller-model/network_inference/result.txt");
+    if (!outputFile.is_open()) {
+        std::cerr << "Error opening file!" << std::endl;
+        return 1;
+    }
+
+    for (int i = 0; i < n; ++i) {
+        // ----------------------------------------------------------------
+        // Pack inputs into whatever array/stream type your DUT expects.
+        // The example below uses plain arrays — adapt to hls::stream<> or
+        // ap_fixed<> as required by your design.
+        // ----------------------------------------------------------------
+
+        ap_fixed<18,5> in_points  [1][N_PT_CH  ][N_PARTICLES];
+        ap_fixed<18,5> in_features[1][N_FEAT_CH][N_PARTICLES];
+        ap_fixed<17,4> in_mask    [1][1        ][N_PARTICLES];
+
+        for (int c = 0; c < N_PT_CH;   ++c)
+            for (int p = 0; p < N_PARTICLES; ++p)
+                in_points[0][c][p] = samples[i].pf_points[0][c][p];
+
+        for (int c = 0; c < N_FEAT_CH; ++c)
+            for (int p = 0; p < N_PARTICLES; ++p)
+                in_features[0][c][p] = samples[i].pf_features[0][c][p];
+
+        for (int p = 0; p < N_PARTICLES; ++p)
+            in_mask[0][0][p] = samples[i].pf_mask[0][0][p];
+
+        // ----------------------------------------------------------------
+        // DUT call — replace with your actual function signature
+        // ----------------------------------------------------------------
+        ap_fixed<17,4> tensor_MSE[1][4]; // placeholder output
+        entry(in_points, in_features, in_mask, tensor_MSE);
+
+        for (int i = 0; i < 4; i++) {
+            outputFile << tensor_MSE[0][i].to_float() << " ";
+        }
+        outputFile << std::endl;
+        // ----------------------------------------------------------------
+        // Check result
+        // ----------------------------------------------------------------
+        
+    }
+    outputFile.close();
     return 0;
 }
+
+
