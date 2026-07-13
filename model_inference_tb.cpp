@@ -112,7 +112,7 @@ static int load_calibration(const char* path, Sample samples[N_SAMPLES])
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[])
 {
-    const char* data_file = (argc > 1) ? argv[1] : "C:/Users/dewei/Documents/B-reco-vitis-hls-smaller-model/network_inference/calibration.txt";
+    const char* data_file = (argc > 1) ? argv[1] : "C:/Users/dewei/Documents/B-reco-vitis-hls-smaller-model/network_inference/test_data.txt";
 
     // Allocate sample storage (stack is fine for 500 samples at this size)
     static Sample samples[N_SAMPLES];
