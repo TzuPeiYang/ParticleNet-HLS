@@ -140,7 +140,6 @@ ap_fixed<17,4> tensor__mod_Mul_1_output_0[1][4][35];
 ap_fixed<19,6> tensor__mod_Mul_3_output_0[1][4][35];
 ap_fixed<20,7> tensor__mod_edge_convs_0_Add_1_output_0[1][32][35];
 ap_fixed<19,6> tensor__mod_edge_convs_0_output_bn_BatchNormalization_output_0[1][32][35];
-ap_fixed<19,6> tensor__mod_Concat_output_0[1][32][35];
 ap_fixed<19,6> tensor__mod_fusion_block_fusion_block_2_Relu_output_0[1][128][35];
 ap_fixed<20,7> tensor__mod_ReduceSum_1_output_0[1][128];
 ap_fixed<18,5> tensor__mod_fc_fc_0_fc_0_0_Gemm_output_0[1][32];
@@ -1061,25 +1060,28 @@ FUNC_PREFIX void node__mod_edge_convs_0_convs_0_Conv( const ap_fixed<20,7> x[1][
 	#pragma HLS INLINE OFF
 	#pragma HLS ARRAY_PARTITION variable=x complete dim=2
 	#pragma HLS ARRAY_PARTITION variable=x complete dim=4
-	#pragma HLS ARRAY_PARTITION variable=w complete dim=1
+	#pragma HLS ARRAY_PARTITION variable=w cyclic factor=4 dim=1
 	#pragma HLS ARRAY_PARTITION variable=w complete dim=2
-	#pragma HLS ARRAY_PARTITION variable=bias complete dim=1
-	#pragma HLS ARRAY_PARTITION variable=y complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=bias cyclic factor=4 dim=1
+	#pragma HLS ARRAY_PARTITION variable=y cyclic factor=4 dim=2
 	#pragma HLS ARRAY_PARTITION variable=y complete dim=4
 
-	for (uint32_t h = 0; h < 35; h++) {
-	#pragma HLS PIPELINE II=1
-		/* 32 output channels x 8 spatial positions, all in parallel. */
-		for (uint32_t m = 0; m < 32; m++) {
-		#pragma HLS UNROLL
-			for (uint32_t i = 0; i < 8; i++) {
+	for (uint32_t m = 0; m < 32; m += 4) {
+		for (uint32_t h = 0; h < 35; h++) {
+		#pragma HLS PIPELINE II=1
+			/* 8 output channels x 8 spatial positions per cycle. */
+			for (uint32_t mm = 0; mm < 4; mm++) {
 			#pragma HLS UNROLL
-				fixed _buf_acc[8];
-				#pragma HLS ARRAY_PARTITION variable=_buf_acc complete
-				for (int _c=0; _c<8; _c++) {
+				for (uint32_t i = 0; i < 8; i++) {
 				#pragma HLS UNROLL
-					_buf_acc[_c] = x[0][_c][h][i] * w[m][_c][0][0]; }
-				y[0][m][h][i] = bias[m] + tree_sum_8(_buf_acc);
+					fixed _buf_acc[8];
+					#pragma HLS ARRAY_PARTITION variable=_buf_acc complete
+					for (int _c=0; _c<8; _c++) {
+					#pragma HLS UNROLL
+						_buf_acc[_c] = x[0][_c][h][i] * w[m+mm][_c][0][0];
+					}
+					y[0][m+mm][h][i] = bias[m+mm] + tree_sum_8(_buf_acc);
+				}
 			}
 		}
 	}
@@ -1168,13 +1170,16 @@ FUNC_PREFIX void node__mod_edge_convs_0_acts_1_Relu( const ap_fixed<19,6> X[1][3
 	#pragma HLS ARRAY_PARTITION variable=X cyclic factor=4 dim=2
 	#pragma HLS ARRAY_PARTITION variable=Y cyclic factor=4 dim=2
 
-    for (uint32_t i1 = 0; i1 < 32; i1++) {
+    for (uint32_t i1 = 0; i1 < 32; i1 += 4) {
         for (uint32_t i2 = 0; i2 < 35; i2++) {
-			#pragma HLS PIPELINE II=1
-            for (uint32_t i3 = 0; i3 < 8; i3++) {
-				#pragma HLS UNROLL
-                ap_fixed<19,6> x = X[0][i1][i2][i3];
-                Y[0][i1][i2][i3] = (x > 0) ? x : (ap_fixed<19,6>)0;
+        #pragma HLS PIPELINE II=1
+            for (uint32_t ii = 0; ii < 4; ii++) {
+            #pragma HLS UNROLL
+                for (uint32_t i3 = 0; i3 < 8; i3++) {
+                #pragma HLS UNROLL
+                    ap_fixed<19,6> x = X[0][i1+ii][i2][i3];
+                    Y[0][i1+ii][i2][i3] = (x > 0) ? (ap_fixed<19,6>)x : (ap_fixed<19,6>)0;
+                }
             }
         }
     }
@@ -1191,24 +1196,32 @@ FUNC_PREFIX void node__mod_edge_convs_0_convs_2_Conv( const ap_fixed<19,6> x[1][
 #pragma HLS INLINE OFF
 
 #pragma HLS ARRAY_PARTITION variable=x complete dim=2
-#pragma HLS ARRAY_PARTITION variable=x complete dim=4
-#pragma HLS ARRAY_PARTITION variable=w complete dim=2
-#pragma HLS ARRAY_PARTITION variable=y complete dim=4
+	#pragma HLS ARRAY_PARTITION variable=x complete dim=4
+	#pragma HLS ARRAY_PARTITION variable=w cyclic factor=4 dim=1
+	#pragma HLS ARRAY_PARTITION variable=w complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=bias cyclic factor=4 dim=1
+	#pragma HLS ARRAY_PARTITION variable=y cyclic factor=4 dim=2
+	#pragma HLS ARRAY_PARTITION variable=y complete dim=4
 
-for (uint32_t m = 0; m < 32; m++) {
-for (uint32_t h = 0; h < 35; h++) {
-#pragma HLS PIPELINE II=1
-    for (uint32_t i = 0; i < 8; i++) {
-    #pragma HLS UNROLL
-        fixed _buf_acc[32];
-        #pragma HLS ARRAY_PARTITION variable=_buf_acc complete
-        for (int _c=0; _c<32; _c++) {
-        #pragma HLS UNROLL
-            _buf_acc[_c] = x[0][_c][h][i] * w[m][_c][0][0]; }
-        y[0][m][h][i] = bias[m] + tree_sum_32(_buf_acc);
-    }
-}
-}
+	for (uint32_t m = 0; m < 32; m += 4) {
+		for (uint32_t h = 0; h < 35; h++) {
+		#pragma HLS PIPELINE II=1
+			/* 8 output channels x 8 spatial positions per cycle. */
+			for (uint32_t mm = 0; mm < 4; mm++) {
+			#pragma HLS UNROLL
+				for (uint32_t i = 0; i < 8; i++) {
+				#pragma HLS UNROLL
+					fixed _buf_acc[32];
+					#pragma HLS ARRAY_PARTITION variable=_buf_acc complete
+					for (int _c=0; _c<32; _c++) {
+					#pragma HLS UNROLL
+						_buf_acc[_c] = x[0][_c][h][i] * w[m+mm][_c][0][0];
+					}
+					y[0][m+mm][h][i] = bias[m+mm] + tree_sum_32(_buf_acc);
+				}
+			}
+		}
+	}
 }
 
 
@@ -1225,13 +1238,16 @@ FUNC_PREFIX void node__mod_edge_convs_0_acts_2_Relu( const ap_fixed<20,7> X[1][3
 	#pragma HLS ARRAY_PARTITION variable=X cyclic factor=4 dim=2
 	#pragma HLS ARRAY_PARTITION variable=Y cyclic factor=4 dim=2
 
-    for (uint32_t i1 = 0; i1 < 32; i1++) {
+    for (uint32_t i1 = 0; i1 < 32; i1 += 4) {
         for (uint32_t i2 = 0; i2 < 35; i2++) {
-			#pragma HLS PIPELINE II=1
-            for (uint32_t i3 = 0; i3 < 8; i3++) {
-				#pragma HLS UNROLL
-                ap_fixed<19,6> x = X[0][i1][i2][i3];
-                Y[0][i1][i2][i3] = (x > 0) ? (ap_fixed<20,7>)x : (ap_fixed<20,7>)0;
+        #pragma HLS PIPELINE II=1
+            for (uint32_t ii = 0; ii < 4; ii++) {
+            #pragma HLS UNROLL
+                for (uint32_t i3 = 0; i3 < 8; i3++) {
+                #pragma HLS UNROLL
+                    ap_fixed<20,7> x = X[0][i1+ii][i2][i3];
+                    Y[0][i1+ii][i2][i3] = (x > 0) ? x : (ap_fixed<20,7>)0;
+                }
             }
         }
     }
@@ -1315,11 +1331,16 @@ FUNC_PREFIX void node__mod_edge_convs_0_Add_1( const ap_fixed<19,6> A[1][32][35]
 	   shift_dir: NOT_GIVEN
 	   fmod: 0
 	 */
-	for (unsigned i0=0; i0<1; i0++)
-	for (unsigned i1=0; i1<32; i1++)
-	for (unsigned i2=0; i2<35; i2++)
-	{
-		C[0][i1][i2] = A[0][i1][i2]+B[0][i1][i2];;
+	#pragma HLS ARRAY_PARTITION variable=A complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=B complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=C complete dim=2
+	for (unsigned i2=0; i2<35; i2++) {
+		#pragma HLS PIPELINE II=1
+		for (unsigned i1=0; i1<32; i1++)
+		{
+			#pragma HLS UNROLL
+			C[0][i1][i2] = A[0][i1][i2]+B[0][i1][i2];;
+		}
 	}
 }
 
@@ -1330,17 +1351,21 @@ FUNC_PREFIX void node__mod_edge_convs_0_Add_1( const ap_fixed<19,6> A[1][32][35]
 
 FUNC_PREFIX void node__mod_edge_convs_0_sc_act_Relu( const ap_fixed<20,7> X[1][32][35], ap_fixed<20,7> Y[1][32][35] )
 {
-#pragma HLS INLINE OFF
+	#pragma HLS INLINE OFF
 
+	#pragma HLS ARRAY_PARTITION variable=X cyclic factor=4 dim=2
+	#pragma HLS ARRAY_PARTITION variable=Y cyclic factor=4 dim=2
 
-	/*Relu*/
-	for( uint32_t i1=0; i1<32; i1++ ) {
-	for( uint32_t i2=0; i2<35; i2++ ) {
-	#pragma HLS PIPELINE II=1
-		ap_fixed<20,7> v = X[0][i1][i2];
-		Y[0][i1][i2] = (v > 0) ? v : (ap_fixed<20,7>)0;
-	}
-	}
+    for (uint32_t i1 = 0; i1 < 32; i1 += 4) {
+        for (uint32_t i2 = 0; i2 < 35; i2++) {
+        #pragma HLS PIPELINE II=1
+            for (uint32_t ii = 0; ii < 4; ii++) {
+                #pragma HLS UNROLL
+                    ap_fixed<20,7> x = X[0][i1+ii][i2];
+                    Y[0][i1+ii][i2] = (x > 0) ? (ap_fixed<20,7>)x : (ap_fixed<20,7>)0;
+            }
+        }
+    }
 }
 
 
@@ -1381,30 +1406,18 @@ FUNC_PREFIX void node__mod_Mul_4( const ap_fixed<19,6> A[1][32][35], const ap_fi
 	   shift_dir: NOT_GIVEN
 	   fmod: 0
 	 */
-	for (unsigned i1=0; i1<32; i1++)
-	for (unsigned i2=0; i2<35; i2++)
-	{
-	#pragma HLS PIPELINE II=1
-		C[0][i1][i2] = A[0][i1][i2]*B[0][0][i2];;
-	}
-}
-
-/*
- * Operand:           Concat
- * Name in ONNX file: /mod/Concat
- */
-FUNC_PREFIX void node__mod_Concat( const ap_fixed<19,6> input_0[1][32][35], ap_fixed<19,6> output[1][32][35] )
-{
-#pragma HLS INLINE OFF
-
-	/* Concat (single input -> straight copy) */
-	for (int64_t i1 = 0; i1 < 32; i1++) {
-		for (int64_t i2 = 0; i2 < 35; i2++) {
+	#pragma HLS ARRAY_PARTITION variable=A complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=C complete dim=2
+	for (unsigned i2=0; i2<35; i2++) {
 		#pragma HLS PIPELINE II=1
-			output[0][i1][i2] = input_0[0][i1][i2];
+		for (unsigned i1=0; i1<32; i1++)
+		{
+			#pragma HLS UNROLL
+			C[0][i1][i2] = A[0][i1][i2]*B[0][0][i2];;
 		}
 	}
 }
+
 
 /*
  * Operand:           Conv
@@ -1447,20 +1460,20 @@ FUNC_PREFIX void node__mod_fusion_block_fusion_block_2_Relu( const ap_fixed<19,6
 {
 	#pragma HLS INLINE OFF
 
-
 	/*Relu*/
 	#pragma HLS ARRAY_PARTITION variable=X cyclic factor=4 dim=2
 	#pragma HLS ARRAY_PARTITION variable=Y cyclic factor=4 dim=2
 
-	/*Relu*/
-	for( uint32_t i1=0; i1<128; i1++ ) {
-		#pragma HLS PIPELINE II=1
-		for( uint32_t i2=0; i2<35; i2++ ) {
-			#pragma HLS UNROLL
-			ap_fixed<19,6> v = X[0][i1][i2];
-			Y[0][i1][i2] = (v > 0) ? v : (ap_fixed<19,6>)0;
-		}
-	}
+    for (uint32_t i1 = 0; i1 < 128; i1 += 4) {
+        for (uint32_t i2 = 0; i2 < 35; i2++) {
+        #pragma HLS PIPELINE II=1
+            for (uint32_t ii = 0; ii < 4; ii++) {
+            #pragma HLS UNROLL
+                ap_fixed<19,6> x = X[0][i1+ii][i2];
+                Y[0][i1+ii][i2] = (x > 0) ? (ap_fixed<19,6>)x : (ap_fixed<19,6>)0;
+            }
+        }
+    }
 }
 
 
@@ -1479,9 +1492,8 @@ FUNC_PREFIX void node__mod_Mul_5( const ap_fixed<19,6> A[1][128][35], const ap_f
 	   shift_dir: NOT_GIVEN
 	   fmod: 0
 	 */
-	#pragma HLS ARRAY_PARTITION variable=A complete dim=3
-	#pragma HLS ARRAY_PARTITION variable=B complete dim=3
-	#pragma HLS ARRAY_PARTITION variable=C complete dim=3
+	#pragma HLS ARRAY_PARTITION variable=A complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=C complete dim=2
 
 	for (unsigned i1=0; i1<128; i1++)
 	{
@@ -1602,19 +1614,19 @@ FUNC_PREFIX void node__fc_out_fc_out_0_Gemm( const ap_fixed<17,4> A[1][32], cons
 #pragma HLS INLINE OFF
 
 
-#pragma HLS ARRAY_PARTITION variable=A complete dim=2
-#pragma HLS ARRAY_PARTITION variable=B complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=A complete dim=2
+	#pragma HLS ARRAY_PARTITION variable=B complete dim=2
 
-for (uint32_t c = 0; c < 4; c++) {
-#pragma HLS PIPELINE II=1
-    fixed prod[32];
-    #pragma HLS ARRAY_PARTITION variable=prod complete
-    for (uint32_t i = 0; i < 32; i++) {
-    #pragma HLS UNROLL
-        prod[i] = A[0][i] * B[c][i];
-    }
-    Y[0][c] = C[c] + tree_sum_32(prod);
-}
+	for (uint32_t c = 0; c < 4; c++) {
+	#pragma HLS PIPELINE II=1
+		fixed prod[32];
+		#pragma HLS ARRAY_PARTITION variable=prod complete
+		for (uint32_t i = 0; i < 32; i++) {
+		#pragma HLS UNROLL
+			prod[i] = A[0][i] * B[c][i];
+		}
+		Y[0][c] = C[c] + tree_sum_32(prod);
+	}
 }
 
 
@@ -1665,8 +1677,7 @@ void entry(const ap_fixed<18,5> tensor_pf_points[1][3][35], const ap_fixed<18,5>
 	node__mod_edge_convs_0_sc_act_Relu( tensor__mod_edge_convs_0_Add_1_output_0, tensor__mod_edge_convs_0_sc_act_Relu_output_0);
 	node__mod_edge_convs_0_output_bn_BatchNormalization( tensor__mod_edge_convs_0_sc_act_Relu_output_0, tensor_mod_edge_convs_0_output_bn_weight, tensor_mod_edge_convs_0_output_bn_bias, tensor_mod_edge_convs_0_output_bn_running_mean, tensor_mod_edge_convs_0_output_bn_running_var, tensor__mod_edge_convs_0_output_bn_BatchNormalization_output_0);
 	node__mod_Mul_4( tensor__mod_edge_convs_0_output_bn_BatchNormalization_output_0, tensor_pf_mask, tensor__mod_Mul_4_output_0);
-	node__mod_Concat( tensor__mod_Mul_4_output_0, tensor__mod_Concat_output_0);
-	node__mod_fusion_block_fusion_block_0_Conv( tensor__mod_Concat_output_0, tensor_onnx__Conv_181, tensor_onnx__Conv_182, tensor__mod_fusion_block_fusion_block_0_Conv_output_0);
+	node__mod_fusion_block_fusion_block_0_Conv( tensor__mod_Mul_4_output_0, tensor_onnx__Conv_181, tensor_onnx__Conv_182, tensor__mod_fusion_block_fusion_block_0_Conv_output_0);
 	node__mod_fusion_block_fusion_block_2_Relu( tensor__mod_fusion_block_fusion_block_0_Conv_output_0, tensor__mod_fusion_block_fusion_block_2_Relu_output_0);
 	node__mod_Mul_5( tensor__mod_fusion_block_fusion_block_2_Relu_output_0, tensor_pf_mask, tensor__mod_Mul_5_output_0);
 	node__mod_ReduceSum_1( tensor__mod_Mul_5_output_0, tensor_onnx__ReduceSum_55, tensor__mod_ReduceSum_1_output_0);
